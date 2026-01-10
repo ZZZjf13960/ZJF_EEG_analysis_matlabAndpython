@@ -1,59 +1,98 @@
-% EEGLAB Preprocessing Script
-% This script demonstrates a standard preprocessing pipeline using EEGLAB functions.
+function eeglab_preprocessing(fileName, filePath, outputName, outputPath, varargin)
+% EEGLAB_PREPROCESSING - Modular EEG preprocessing pipeline
+%
+% Usage:
+%   eeglab_preprocessing(fileName, filePath, outputName, outputPath, ...)
+%
+% Optional arguments (Name-Value pairs):
+%   'LowFreq'       - Lower frequency for bandpass filter (default: 1)
+%   'HighFreq'      - Upper frequency for bandpass filter (default: 40)
+%   'BadChannels'   - Vector of bad channel indices to interpolate (default: [])
+%   'ChannelLocs'   - Path to channel location file (e.g., 'standard-10-20-cap81.elp')
+%   'RunICA'        - Boolean to run ICA after preprocessing (default: false)
+%
+% Example:
+%   eeglab_preprocessing('sub01.set', '/data/', 'sub01_clean.set', '/out/', ...
+%                        'BadChannels', [10 12], 'ChannelLocs', 'standard_1020.elc', ...
+%                        'RunICA', false);
 
-% Define file parameters
-% Note: Replace these with actual file paths
-fileName = 'subject01.set'; % Input file name
-filePath = '/path/to/data/'; % Input file path
-outputName = 'subject01_preprocessed.set';
-outputPath = '/path/to/save/';
+    % Parse inputs
+    p = inputParser;
+    addRequired(p, 'fileName', @ischar);
+    addRequired(p, 'filePath', @ischar);
+    addRequired(p, 'outputName', @ischar);
+    addRequired(p, 'outputPath', @ischar);
+    addParameter(p, 'LowFreq', 1, @isnumeric);
+    addParameter(p, 'HighFreq', 40, @isnumeric);
+    addParameter(p, 'BadChannels', [], @isnumeric);
+    addParameter(p, 'ChannelLocs', '', @ischar);
+    addParameter(p, 'RunICA', false, @islogical);
 
-% Start EEGLAB
-[ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab;
+    parse(p, fileName, filePath, outputName, outputPath, varargin{:});
+    params = p.Results;
 
-% 1. Load Data
-% Check file extension to use appropriate loading function
-% This example uses pop_loadset for .set files.
-% For .bdf, .edf use pop_biosig or similar.
-fprintf('Loading %s...\n', fullfile(filePath, fileName));
-try
-    EEG = pop_loadset('filename', fileName, 'filepath', filePath);
-catch ME
-    error('Could not load file. Make sure file exists and EEGLAB is in path.');
+    % Start EEGLAB
+    if ~exist('eeglab', 'file')
+        error('EEGLAB is not in the MATLAB path.');
+    end
+    [ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab;
+
+    %% 1. Load Data
+    fprintf('Loading %s...\n', fullfile(params.filePath, params.fileName));
+    if contains(params.fileName, '.set')
+        EEG = pop_loadset('filename', params.fileName, 'filepath', params.filePath);
+    else
+        % Add other formats here as needed (e.g., pop_biosig)
+        error('Currently only .set files are supported in this demo wrapper.');
+    end
+    [ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 0, 'setname', 'Raw Data', 'gui', 'off');
+
+    %% 2. Load Channel Locations (Montage)
+    if ~isempty(params.ChannelLocs)
+        fprintf('Loading channel locations from %s...\n', params.ChannelLocs);
+        EEG = pop_chanedit(EEG, 'lookup', params.ChannelLocs);
+    elseif isempty(EEG.chanlocs)
+        warning('No channel locations provided and none in dataset. Interpolation and ICA might fail.');
+    end
+
+    %% 3. Bad Channel Interpolation
+    if ~isempty(params.BadChannels)
+        if isempty(EEG.chanlocs)
+            warning('Cannot interpolate without channel locations. Skipping interpolation.');
+        else
+            fprintf('Interpolating bad channels: %s\n', num2str(params.BadChannels));
+            EEG = pop_interp(EEG, params.BadChannels, 'spherical');
+        end
+    else
+        fprintf('No bad channels specified for interpolation.\n');
+    end
+
+    %% 4. Filter Data
+    fprintf('Filtering data %d-%d Hz...\n', params.LowFreq, params.HighFreq);
+    EEG = pop_eegfiltnew(EEG, 'locutoff', params.LowFreq, 'hicutoff', params.HighFreq, 'plotfreqz', 0);
+    [ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 1, 'setname', 'Filtered', 'gui', 'off');
+
+    %% 5. Re-reference
+    fprintf('Re-referencing to average...\n');
+    EEG = pop_reref(EEG, []);
+    [ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 2, 'setname', 'Referenced', 'gui', 'off');
+
+    %% 6. Save Preprocessed Data
+    fprintf('Saving preprocessed data to %s...\n', fullfile(params.outputPath, params.outputName));
+    EEG = pop_saveset(EEG, 'filename', params.outputName, 'filepath', params.outputPath);
+
+    %% 7. Run ICA (Optional)
+    if params.RunICA
+        fprintf('Running ICA...\n');
+        EEG = pop_runica(EEG, 'icatype', 'runica', 'extended', 1, 'interrupt', 'on');
+
+        [~, name, ext] = fileparts(params.outputName);
+        icaOutputName = [name, '_ICA', ext];
+        fprintf('Saving data with ICA weights to %s...\n', fullfile(params.outputPath, icaOutputName));
+        EEG = pop_saveset(EEG, 'filename', icaOutputName, 'filepath', params.outputPath);
+    else
+        fprintf('Skipping ICA. Set RunICA to true to run it.\n');
+    end
+
+    fprintf('Preprocessing pipeline complete.\n');
 end
-
-[ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 0, 'setname', 'Raw Data', 'gui', 'off');
-
-% 2. Filter Data (1-40 Hz)
-% pop_eegfiltnew(EEG, locutoff, hicutoff, plotfreqz, usefft, revfilt, plotfilt, minphase)
-% locutoff = 1, hicutoff = 40
-fprintf('Filtering data 1-40 Hz...\n');
-EEG = pop_eegfiltnew(EEG, 'locutoff', 1, 'hicutoff', 40, 'plotfreqz', 0);
-[ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 1, 'setname', 'Filtered', 'gui', 'off');
-
-% 3. Re-reference (Average Reference)
-% pop_reref(EEG, ref, 'keepref', 'on'/'off', 'exclude', [channels])
-% ref = [] means average reference
-fprintf('Re-referencing to average...\n');
-EEG = pop_reref(EEG, []);
-[ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 2, 'setname', 'Referenced', 'gui', 'off');
-
-% 4. ICA (Independent Component Analysis)
-% Using 'runica' (Infomax) which is standard in EEGLAB
-% Note: This can take a long time.
-fprintf('Running ICA...\n');
-EEG = pop_runica(EEG, 'icatype', 'runica', 'extended', 1, 'interrupt', 'on');
-[ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 3, 'setname', 'ICA Computed', 'gui', 'off');
-
-% Note: Automated artifact rejection (e.g., ICLabel) is recommended here
-% but requires the ICLabel plugin.
-% Example if ICLabel is installed:
-% EEG = pop_iclabel(EEG, 'default');
-% EEG = pop_icflag(EEG, [NaN NaN;0.9 1;0.9 1;NaN NaN;NaN NaN;NaN NaN;NaN NaN]);
-% EEG = pop_subcomp(EEG, [], 0);
-
-% 5. Save Preprocessed Data
-fprintf('Saving data to %s...\n', fullfile(outputPath, outputName));
-EEG = pop_saveset(EEG, 'filename', outputName, 'filepath', outputPath);
-
-fprintf('Preprocessing complete.\n');
