@@ -1,7 +1,7 @@
 
 import numpy as np
 import mne
-from microstate_methods import segment_microstates
+from microstate_methods import segment_microstates, smooth_segmentation, calculate_statistics
 
 def create_dummy_data():
     """Create dummy MNE Raw data with structured activity."""
@@ -51,6 +51,19 @@ def main():
             print("GEV is good.")
         else:
             print("GEV is low.")
+
+        print("\nStatistics (Raw):")
+        stats = calculate_statistics(segmentation, sfreq=raw.info['sfreq'])
+        for k in range(4):
+            print(f"State {k+1}: Dur={stats['duration'][k]:.1f}ms, Occ={stats['occurrence'][k]:.1f}/s, Cov={stats['coverage'][k]*100:.1f}%")
+
+        print("\nSmoothing...")
+        smoothed = smooth_segmentation(segmentation, min_duration=3) # 3 samples = 30ms at 100Hz
+        stats_smoothed = calculate_statistics(smoothed, sfreq=raw.info['sfreq'])
+
+        print("Statistics (Smoothed):")
+        for k in range(4):
+            print(f"State {k+1}: Dur={stats_smoothed['duration'][k]:.1f}ms, Occ={stats_smoothed['occurrence'][k]:.1f}/s, Cov={stats_smoothed['coverage'][k]*100:.1f}%")
 
     except Exception as e:
         print(f"Analysis failed: {e}")

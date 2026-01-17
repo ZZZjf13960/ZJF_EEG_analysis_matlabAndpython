@@ -84,6 +84,38 @@ function [microstate] = ft_microstates(data, n_states)
     label_map(sort_order) = 1:n_states;
     labels = label_map(labels);
 
+    % 6. Statistics (Duration, Occurrence, Coverage)
+    stats = [];
+    stats.duration = zeros(1, n_states);
+    stats.occurrence = zeros(1, n_states);
+    stats.coverage = zeros(1, n_states);
+
+    total_seconds = nsamples / data.fsample;
+
+    % Find segments
+    d = [1 diff(labels) 1];
+    changes = find(d ~= 0);
+    durations = cell(1, n_states);
+
+    for i = 1:length(changes)-1
+         start_idx = changes(i);
+         end_idx = changes(i+1)-1;
+         len = end_idx - start_idx + 1;
+         lbl = labels(start_idx);
+
+         if lbl <= n_states && lbl > 0
+             durations{lbl} = [durations{lbl}, len * 1000 / data.fsample]; % ms
+         end
+    end
+
+    for k = 1:n_states
+        stats.coverage(k) = sum(labels == k) / nsamples;
+        if ~isempty(durations{k})
+            stats.duration(k) = mean(durations{k});
+            stats.occurrence(k) = length(durations{k}) / total_seconds;
+        end
+    end
+
     % Prepare output structure
     microstate = [];
     microstate.maps = maps;         % (n_states x nchans)
@@ -91,5 +123,6 @@ function [microstate] = ft_microstates(data, n_states)
     microstate.gev = sum(gev_sorted);
     microstate.gev_per_state = gev_sorted;
     microstate.gfp = gfp;
+    microstate.stats = stats;
 
 end

@@ -145,3 +145,139 @@ def segment_microstates(inst, n_states=4, random_state=None, n_init=10):
     segmentation = np.array([remap[s] for s in segmentation])
 
     return maps, segmentation, gev
+
+def smooth_segmentation(segmentation, min_duration=0):
+    """
+    Smooth microstate segmentation by rejecting short segments.
+
+    Parameters:
+    -----------
+    segmentation : array
+        The label sequence.
+    min_duration : int
+        Minimum number of samples for a segment.
+
+    Returns:
+    --------
+    smoothed : array
+        Smoothed label sequence.
+    """
+    if min_duration <= 1:
+        return segmentation.copy()
+
+    # Find segments
+    # Simple smoothing: if segment < min_duration, assign to neighbor?
+    # Standard approach: check bounds and merge into previous or next segment based on correlation
+    # For simplicity here: merge into previous segment (or next if it's the start).
+
+    smoothed = segmentation.copy()
+    n_samples = len(smoothed)
+
+    # Identify run lengths
+    # Using simple iteration
+
+    # This loop might be slow for very long data, but adequate for typical EEG
+    # A cleaner way: find indices where value changes
+    change_points = np.where(np.diff(smoothed) != 0)[0] + 1
+    # Add start and end
+    change_points = np.concatenate(([0], change_points, [n_samples]))
+
+    for i in range(len(change_points)-1):
+        start = change_points[i]
+        end = change_points[i+1]
+        length = end - start
+
+        if length < min_duration:
+            # Segment too short. Reassign.
+            # Assign to the 'half' that matches left and 'half' that matches right?
+            # Or usually: assign to the neighbor that has the highest correlation (if we had access to data here).
+            # Without data access in this function, we usually assign to the *middle* of the neighbors
+            # or simply to the previous one (causal).
+
+            # Simple heuristic: Split and assign half to left, half to right.
+
+            left_neighbor = smoothed[start-1] if start > 0 else smoothed[end]
+            right_neighbor = smoothed[end] if end < n_samples else smoothed[start-1]
+
+            # If at very start, assign to right
+            if start == 0:
+                smoothed[start:end] = right_neighbor
+            elif end == n_samples:
+                smoothed[start:end] = left_neighbor
+            else:
+                # Split
+                mid = start + length // 2
+                smoothed[start:mid] = left_neighbor
+                smoothed[mid:end] = right_neighbor
+
+    # Run again? Merging might create new short segments.
+    # Usually smoothing is run iteratively until convergence or just once.
+    # We'll run it once for simplicity.
+
+    return smoothed
+
+def calculate_statistics(segmentation, sfreq=None, n_states=4):
+    """
+    Calculate microstate statistics.
+
+    Parameters:
+    -----------
+    segmentation : array
+        Label sequence.
+    sfreq : float | None
+        Sampling frequency. If None, duration is in samples.
+    n_states : int
+        Number of states.
+
+    Returns:
+    --------
+    stats : dict
+        Dictionary containing 'duration', 'occurrence', 'coverage'.
+    """
+
+    stats = {
+        'duration': np.zeros(n_states),    # Mean duration
+        'occurrence': np.zeros(n_states),  # Occurrences per second
+        'coverage': np.zeros(n_states)     # Fraction of time
+    }
+
+    # Calculate coverage
+    total_time = len(segmentation)
+    if sfreq:
+        total_seconds = total_time / sfreq
+    else:
+        total_seconds = 1.0 # Normalized
+
+    for k in range(n_states):
+        count = np.sum(segmentation == k)
+        stats['coverage'][k] = count / total_time
+
+    # Calculate duration and occurrence
+    # Find segments
+    change_points = np.where(np.diff(segmentation) != 0)[0] + 1
+    change_points = np.concatenate(([0], change_points, [total_time]))
+
+    durations = [[] for _ in range(n_states)]
+
+    for i in range(len(change_points)-1):
+        start = change_points[i]
+        end = change_points[i+1]
+        length = end - start
+        label = segmentation[start]
+
+        if label < n_states:
+            if sfreq:
+                durations[label].append(length * 1000.0 / sfreq) # in ms
+            else:
+                durations[label].append(length) # in samples
+
+    for k in range(n_states):
+        if len(durations[k]) > 0:
+            stats['duration'][k] = np.mean(durations[k])
+            if sfreq:
+                stats['occurrence'][k] = len(durations[k]) / total_seconds
+        else:
+            stats['duration'][k] = 0
+            stats['occurrence'][k] = 0
+
+    return stats

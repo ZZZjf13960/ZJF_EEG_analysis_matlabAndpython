@@ -12,3 +12,8 @@ microstate = ft_microstates(data, 4);
 
 disp(['GEV: ', num2str(microstate.gev)]);
 disp(['Maps size: ', num2str(size(microstate.maps))]);
+
+if isfield(microstate, 'stats')
+    disp('Statistics:');
+    disp(microstate.stats);
+end
